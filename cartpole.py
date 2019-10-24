@@ -17,13 +17,13 @@ def discount(rw, gamma=0.9):
 class Model(object):
 
     def __init__(self,
-                 activation='tanh',
-                 layers=2,
-                 size=256,
-                 gamma=0.9,
+                 activation='elu',
+                 layers=1,
+                 size=4,
+                 gamma=0.95,
                  render=False,
-                 batch_size=10,
-                 optimizer=tf.keras.optimizers.Adam(1e-3)):
+                 batch_size=20,
+                 optimizer=tf.keras.optimizers.Adam(1e-2)):
         # specify the model architecture
         # a simple model suffices for such a low dimension, low complexity case
         self.model = tf.keras.Sequential(
