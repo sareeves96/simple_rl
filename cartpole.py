@@ -1,9 +1,9 @@
 import tensorflow as tf
 import gym
 import numpy as np
-from scipy.stats import zscore as z_transform
+import argparse
 
-env = gym.make('CartPole-v1')
+from scipy.stats import zscore as z_transform
 
 
 # discount rewards so that actions close to the end of the game have a larger weight
@@ -128,8 +128,14 @@ class Model(object):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--show', action='store_true',
+                        help='whether to show the model, which slows down training')
+    args = parser.parse_args()
+
     # training is much faster if we don't show the simulation. But thats all the fun!
-    model = Model(render=True)
+    env = gym.make('CartPole-v1')
+    model = Model(render=args.show)
     losses = 1
     while bool(losses):
         losses = model.batch_train()
