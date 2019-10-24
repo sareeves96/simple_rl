@@ -85,9 +85,11 @@ class Model(object):
 
         if np.array_equal(np.array(rw_list), np.ones(len(rw_list)) * 500):
             print('Congratulations! The learner has achieved the best possible performance.')
+            print('Saving weights to "success"')
+            self.model.save_weights('success')
             return 0
 
-        print('rewards: ', rw_list)
+        print('Mean reward: ', np.mean(rw_list))
         # normalize rewards
         rw_norm = z_transform(np.array(rw_list))
         # convert to tensors to discount
@@ -139,4 +141,5 @@ if __name__ == '__main__':
     losses = 1
     while bool(losses):
         losses = model.batch_train()
+        model.model.save_weights('current')
 
