@@ -1,0 +1,4 @@
+tensorflow-gpu
+gym
+numpy
+scipy
