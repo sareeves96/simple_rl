@@ -12,3 +12,5 @@ To get the dependencies,
 To run the default learner,
 
 `python cartpole.py`
+
+Add the flag `--show` to demonstrate the learning process
