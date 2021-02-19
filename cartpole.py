@@ -5,7 +5,8 @@ import argparse
 
 from scipy.stats import zscore as z_transform
 
-tf.config.set_visible_devices([], 'GPU')
+# comment out to use gpu
+# tf.config.set_visible_devices([], 'GPU')
 
 
 # discount rewards so that actions close to the end of the game have a larger weight
@@ -19,7 +20,7 @@ def discount(rw, gamma=0.9):
 class Model(object):
 
     def __init__(self,
-                 activation='tanh',
+                 activation='sigmoid',
                  layers=1,
                  size=4,
                  gamma=0.90,
@@ -52,7 +53,7 @@ class Model(object):
             # get the distribution over action space from the model
             action_dist = self.model.predict(tf.convert_to_tensor(tf.expand_dims(observation, 0)))[0]
             # sample from the action space
-            action = int(np.random.choice(np.arange(2), p=action_dist))
+            action = int(np.random.choice(np.arange(len(action_dist)), p=action_dist))
             # get the information about the state of the system following the action
             observation, reward, done, info = env.step(action)
             all_obs.append(observation)
@@ -133,7 +134,7 @@ class Model(object):
         # apply the gradients to their respective variables
         # can't do this until all gradients have been calculated
         self.optimizer.apply_gradients(zip(avg_gradients, self.model.trainable_variables))
-        print(self.model.weights)
+        # print(self.model.weights)
 
         return 1
 
@@ -145,7 +146,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # training is much faster if we don't show the simulation. But thats all the fun!
-    env = gym.make('CartPole-v1')
+    env = gym.make('Acrobot-v1')
     model = Model(render=args.show)
     losses = 1
     while bool(losses):
