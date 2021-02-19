@@ -7,8 +7,10 @@ The default settings allow for the learner 'win' (balance the pole for 5 seconds
 
 To get the dependencies,
 
-`pip install requirements.txt`
+`pip install -r requirements.txt`
 
 To run the default learner,
 
 `python cartpole.py`
+
+Add the flag `--show` to demonstrate the learning process
