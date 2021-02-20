@@ -1,45 +1,46 @@
 import tensorflow as tf
 import gym
 import numpy as np
-import argparse
 
 from scipy.stats import zscore as z_transform
-
-# comment out to use gpu
-# tf.config.set_visible_devices([], 'GPU')
 
 
 # discount rewards so that actions close to the end of the game have a larger weight
 # a larger gamma makes early actions matter more
 def discount(rw, gamma=0.9):
+    # weight individual rewards with an exponential decay function
+    # since the magnitude should be largest close to the end of the session, apply the weights in reverse order
     weights = np.array([gamma**(rw.shape[0]-i-1) for i in range(rw.shape[0])])
     discounted = tf.convert_to_tensor(weights, dtype=tf.float32) * rw
+
     return discounted
 
 
 class Model(object):
 
     def __init__(self,
-                 activation='sigmoid',
+                 activation='tanh',
                  layers=1,
                  size=4,
-                 gamma=0.90,
-                 render=False,
+                 gamma=0.92,
                  batch_size=10,
-                 optimizer=tf.keras.optimizers.Adam(5e-2)
+                 optimizer=tf.keras.optimizers.Adam(0.01),
+                 stop=500
                  ):
 
         # specify the model architecture
         # a simple model suffices for such a low dimension, low complexity case
         self.model = tf.keras.Sequential(
               [tf.keras.layers.Input(shape=env.observation_space.shape)]
-            + [tf.keras.layers.Dense(size, activation=activation) for _ in range(layers)]
-            + [tf.keras.layers.Dense(env.action_space.n, activation=tf.nn.softmax)]
+              + [tf.keras.layers.Dense(size, activation=activation) for _ in range(layers)]
+              + [tf.keras.layers.Dense(env.action_space.n, activation=tf.nn.softmax)]
         )
         self.gamma = gamma
-        self.render = render
         self.batch_size = batch_size
         self.optimizer = optimizer
+        self.iteration = 0
+        self.stop = stop
+        self.display = False
 
     def run(self):
         all_obs = []
@@ -48,7 +49,8 @@ class Model(object):
         observation = env.reset()
 
         while True:
-            if self.render:
+            # every 100 iterations, display the progress!
+            if self.iteration % (self.batch_size * 10) == 0 or self.display:
                 env.render()
             # get the distribution over action space from the model
             action_dist = self.model.predict(tf.convert_to_tensor(tf.expand_dims(observation, 0)))[0]
@@ -62,6 +64,8 @@ class Model(object):
             # done specifies that the session is over, usually due to a win or loss
             if done:
                 break
+        env.close()
+        self.iteration += 1
 
         # return the observations and rewards (the reward will be discounted later)
         return all_obs, all_ac, rw
@@ -71,15 +75,13 @@ class Model(object):
         # this is the second time the action probabilities are calculated and it may be possible to recode this better
         y_pred = self.model(obs)
 
-        # this is the chosen action, which depends on the probability in the prediction
-        # the less likely this chosen action is, the higher the loss
-        # since rewards are z-transformed, the sign will be negative for relatively poor runs in a session
-        # increase the probability of actions that led to rewards, decrease those that led to negative rewards
         y_true = ac
 
-        out = tf.math.multiply(tf.keras.losses.binary_crossentropy(y_true, y_pred), rw)
+        # increase the probability of actions that led to rewards
+        # decrease the probability of actions leading to negative rewards
+        loss = tf.math.multiply(tf.keras.losses.binary_crossentropy(y_true, y_pred), rw)
 
-        return out
+        return loss
 
     def batch_train(self):
         obs_list = []
@@ -92,18 +94,16 @@ class Model(object):
             ac_list.append(ac)
             rw_list.append(rw)
 
-        if np.array_equal(np.array(rw_list), np.ones(len(rw_list)) * 500):
-            print('Congratulations! The learner has achieved the best possible performance.')
-            print('Saving weights to "success"')
-            self.model.save_weights('success')
+        print(f'Mean reward after {self.iteration} sessions: ', np.mean(rw_list))
+        if np.mean(rw_list) >= self.stop:
+            print('Model optimized!')
             return 0
 
-        print('Mean reward: ', np.mean(rw_list))
-        # normalize rewards
-        rw_norm = z_transform(np.array(rw_list))
-        # convert to tensors to discount
+        # normalize rewards, punishing worst performing session decisions and rewarding best performing ones
+        rw_norm = [r - np.mean(rw_list) for r in rw_list]
+        # expand each session reward so that each frame's action is initially given the same total reward
         rw_tensors = [tf.ones(shape=len(obs_list[i])) * rw for i, rw in enumerate(rw_norm)]
-        # list of discounted rewards in session
+        # discount rewards so that actions closer to the end of the session get more weight
         rw_discount = [discount(rw) for rw in rw_tensors]
         # list of observations
         obs_tensors = [tf.convert_to_tensor(obs, dtype=tf.float32) for obs in obs_list]
@@ -134,24 +134,19 @@ class Model(object):
         # apply the gradients to their respective variables
         # can't do this until all gradients have been calculated
         self.optimizer.apply_gradients(zip(avg_gradients, self.model.trainable_variables))
-        # print(self.model.weights)
+        #print(self.model.weights)
 
         return 1
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--show', action='store_true',
-                        help='whether to show the model, which slows down training')
-    args = parser.parse_args()
-
     # training is much faster if we don't show the simulation. But thats all the fun!
-    env = gym.make('Acrobot-v1')
-    model = Model(render=args.show)
+    env = gym.make('CartPole-v1')
+    model = Model()
     losses = 1
     while bool(losses):
         losses = model.batch_train()
         model.model.save_weights('current')
-    model.render = True
+    model.display = True
     while True:
         model.run()
