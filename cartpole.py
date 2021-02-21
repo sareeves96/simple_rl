@@ -2,8 +2,6 @@ import tensorflow as tf
 import gym
 import numpy as np
 
-from scipy.stats import zscore as z_transform
-
 
 # discount rewards so that actions close to the end of the game have a larger weight
 # a larger gamma makes early actions matter more
@@ -22,9 +20,9 @@ class Model(object):
                  activation='tanh',
                  layers=1,
                  size=4,
-                 gamma=0.92,
-                 batch_size=10,
-                 optimizer=tf.keras.optimizers.Adam(0.01),
+                 gamma=0.9,
+                 batch_size=20,
+                 optimizer=tf.keras.optimizers.SGD(0.1),
                  stop=500
                  ):
 
@@ -33,7 +31,7 @@ class Model(object):
         self.model = tf.keras.Sequential(
               [tf.keras.layers.Input(shape=env.observation_space.shape)]
               + [tf.keras.layers.Dense(size, activation=activation) for _ in range(layers)]
-              + [tf.keras.layers.Dense(env.action_space.n, activation=tf.nn.softmax)]
+              + [tf.keras.layers.Dense(env.action_space.n, activation=tf.nn.softmax, use_bias=False)]
         )
         self.gamma = gamma
         self.batch_size = batch_size
@@ -50,12 +48,14 @@ class Model(object):
 
         while True:
             # every 100 iterations, display the progress!
-            if self.iteration % (self.batch_size * 10) == 0 or self.display:
+            if self.iteration % self.batch_size == 0 or self.display:
                 env.render()
             # get the distribution over action space from the model
             action_dist = self.model.predict(tf.convert_to_tensor(tf.expand_dims(observation, 0)))[0]
-            # sample from the action space
-            action = int(np.random.choice(np.arange(len(action_dist)), p=action_dist))
+            # sample from the action space: compromise between exploration and exploitation
+            # action = int(np.random.choice(np.arange(len(action_dist)), p=action_dist))
+            # choose the expected best action
+            action = tf.argmax(action_dist).numpy()
             # get the information about the state of the system following the action
             observation, reward, done, info = env.step(action)
             all_obs.append(observation)
@@ -79,9 +79,12 @@ class Model(object):
 
         # increase the probability of actions that led to rewards
         # decrease the probability of actions leading to negative rewards
-        loss = tf.math.multiply(tf.keras.losses.binary_crossentropy(y_true, y_pred), rw)
 
-        return loss
+        # binary cross-entropy is just a kind of loss function that is larger when y_true and y_pred are more different
+        loss = -tf.keras.losses.binary_crossentropy(y_true, y_pred)
+        # element-wise multiplication
+        rw_weighted_loss = tf.math.multiply(loss, rw)
+        return rw_weighted_loss
 
     def batch_train(self):
         obs_list = []
@@ -94,13 +97,14 @@ class Model(object):
             ac_list.append(ac)
             rw_list.append(rw)
 
-        print(f'Mean reward after {self.iteration} sessions: ', np.mean(rw_list))
-        if np.mean(rw_list) >= self.stop:
+        mean_rw = np.mean(rw_list)
+        print(f'Mean reward after {self.iteration} sessions: ', mean_rw, '  stdev ', np.std(rw_list))
+        if mean_rw >= self.stop:
             print('Model optimized!')
             return 0
 
         # normalize rewards, punishing worst performing session decisions and rewarding best performing ones
-        rw_norm = [r - np.mean(rw_list) for r in rw_list]
+        rw_norm = [(r - mean_rw)/mean_rw for r in rw_list]
         # expand each session reward so that each frame's action is initially given the same total reward
         rw_tensors = [tf.ones(shape=len(obs_list[i])) * rw for i, rw in enumerate(rw_norm)]
         # discount rewards so that actions closer to the end of the session get more weight
@@ -134,19 +138,17 @@ class Model(object):
         # apply the gradients to their respective variables
         # can't do this until all gradients have been calculated
         self.optimizer.apply_gradients(zip(avg_gradients, self.model.trainable_variables))
-        #print(self.model.weights)
+        # print(self.model.weights)
 
         return 1
 
 
 if __name__ == '__main__':
-    # training is much faster if we don't show the simulation. But thats all the fun!
     env = gym.make('CartPole-v1')
     model = Model()
     losses = 1
     while bool(losses):
         losses = model.batch_train()
-        model.model.save_weights('current')
     model.display = True
     while True:
         model.run()
