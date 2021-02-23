@@ -20,9 +20,9 @@ class Model(object):
                  activation='elu',
                  layers=1,
                  size=4,
-                 gamma=0.92,
+                 gamma=0.95,
                  batch_size=20,
-                 optimizer=tf.keras.optimizers.SGD(0.1),
+                 optimizer=tf.keras.optimizers.Adam(0.05),
                  stop=500
                  ):
 
@@ -73,19 +73,14 @@ class Model(object):
         y_pred = self.model(obs)
         y_true = ac
 
-        # increase the probability of actions that led to rewards
-        # decrease the probability of actions leading to negative rewards
-
-        # binary cross-entropy is just a kind of loss function that is larger when y_true and y_pred are more different
+        # increase the probability of actions that led to rewards, decrease the converse
         loss = tf.keras.losses.binary_crossentropy(y_true, y_pred)
-        # element-wise multiplication
+        # element-wise multiplication of discounted reward
         rw_weighted_loss = tf.math.multiply(loss, rw)
         return rw_weighted_loss
 
     def batch_train(self):
-        obs_list = []
-        ac_list = []
-        rw_list = []
+        obs_list, ac_list, rw_list = [], [], []
 
         for _ in range(self.batch_size):
             obs, ac, rw = self.run()
@@ -101,7 +96,6 @@ class Model(object):
             return 0
 
         # normalize rewards, punishing worst performing session decisions and rewarding best performing ones
-        # rw_norm = [(r - mean_rw) / mean_rw for r in rw_list]
         rw_norm = [(r - mean_rw) / std_rw for r in rw_list]
         # expand each session reward so that each frame's action is initially given the same total reward
         rw_tensors = [tf.ones(shape=len(obs_list[i])) * rw for i, rw in enumerate(rw_norm)]
@@ -113,13 +107,11 @@ class Model(object):
         ac_tensors = [tf.one_hot(ac, depth=env.action_space.n) for ac in ac_list]
 
         gradients = []
-
         # for each session of observations and discounted rewards
         for obs, act, rw in zip(obs_tensors, ac_tensors, rw_discount):
             # compute the gradient of the selected actions with respect to the observations of the environment
             with tf.GradientTape() as tape:
                 loss = self.compute_loss(obs, act, rw)
-                loss = tf.convert_to_tensor(loss, dtype=tf.float32)
             g = tape.gradient(loss, self.model.trainable_variables)
             # collect all the gradients, instead of applying them at each step which would give inaccurate rewards
             gradients.append(g)
@@ -132,15 +124,11 @@ class Model(object):
             t = tf.convert_to_tensor([grad[k] for grad in gradients])
             # average gradient across sessions
             t = tf.reduce_mean(t, axis=0)
-            # t = t - tf.ones_like(t) * tf.reduce_mean(t)
             avg_gradients.append(t)
 
-        # apply the gradients to their respective variables
-        # can't do this until all gradients have been calculated
+        # apply the gradients to their respective model parameters
         self.optimizer.apply_gradients(zip(avg_gradients, self.model.trainable_variables))
-        # print(self.model.weights)
         print('SSE of weights: ', [tf.reduce_mean(f**2).numpy() for f in self.model.weights])
-
         return 1
 
 
