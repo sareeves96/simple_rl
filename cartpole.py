@@ -17,10 +17,10 @@ def discount(rw, gamma=0.9):
 class Model(object):
 
     def __init__(self,
-                 activation='tanh',
+                 activation='elu',
                  layers=1,
                  size=4,
-                 gamma=0.9,
+                 gamma=0.92,
                  batch_size=20,
                  optimizer=tf.keras.optimizers.SGD(0.1),
                  stop=500
@@ -47,15 +47,12 @@ class Model(object):
         observation = env.reset()
 
         while True:
-            # every 100 iterations, display the progress!
-            if self.iteration % self.batch_size == 0 or self.display:
+            if self.display:
                 env.render()
             # get the distribution over action space from the model
             action_dist = self.model.predict(tf.convert_to_tensor(tf.expand_dims(observation, 0)))[0]
             # sample from the action space: compromise between exploration and exploitation
-            # action = int(np.random.choice(np.arange(len(action_dist)), p=action_dist))
-            # choose the expected best action
-            action = tf.argmax(action_dist).numpy()
+            action = int(np.random.choice(np.arange(len(action_dist)), p=action_dist))
             # get the information about the state of the system following the action
             observation, reward, done, info = env.step(action)
             all_obs.append(observation)
@@ -74,14 +71,13 @@ class Model(object):
         # reproduce the action probabilities that were predicted on this step so that we can calculate the gradient
         # this is the second time the action probabilities are calculated and it may be possible to recode this better
         y_pred = self.model(obs)
-
         y_true = ac
 
         # increase the probability of actions that led to rewards
         # decrease the probability of actions leading to negative rewards
 
         # binary cross-entropy is just a kind of loss function that is larger when y_true and y_pred are more different
-        loss = -tf.keras.losses.binary_crossentropy(y_true, y_pred)
+        loss = tf.keras.losses.binary_crossentropy(y_true, y_pred)
         # element-wise multiplication
         rw_weighted_loss = tf.math.multiply(loss, rw)
         return rw_weighted_loss
@@ -98,13 +94,15 @@ class Model(object):
             rw_list.append(rw)
 
         mean_rw = np.mean(rw_list)
-        print(f'Mean reward after {self.iteration} sessions: ', mean_rw, '  stdev ', np.std(rw_list))
+        std_rw = np.std(rw_list)
+        print(f'\nMean reward after {self.iteration} sessions: ', mean_rw, '  stdev ', std_rw, '\n')
         if mean_rw >= self.stop:
             print('Model optimized!')
             return 0
 
         # normalize rewards, punishing worst performing session decisions and rewarding best performing ones
-        rw_norm = [(r - mean_rw)/mean_rw for r in rw_list]
+        # rw_norm = [(r - mean_rw) / mean_rw for r in rw_list]
+        rw_norm = [(r - mean_rw) / std_rw for r in rw_list]
         # expand each session reward so that each frame's action is initially given the same total reward
         rw_tensors = [tf.ones(shape=len(obs_list[i])) * rw for i, rw in enumerate(rw_norm)]
         # discount rewards so that actions closer to the end of the session get more weight
@@ -132,13 +130,16 @@ class Model(object):
         for k in range(len(gradients[0])):
             # get all of the gradients associated to one kernel
             t = tf.convert_to_tensor([grad[k] for grad in gradients])
+            # average gradient across sessions
             t = tf.reduce_mean(t, axis=0)
+            # t = t - tf.ones_like(t) * tf.reduce_mean(t)
             avg_gradients.append(t)
 
         # apply the gradients to their respective variables
         # can't do this until all gradients have been calculated
         self.optimizer.apply_gradients(zip(avg_gradients, self.model.trainable_variables))
         # print(self.model.weights)
+        print('SSE of weights: ', [tf.reduce_mean(f**2).numpy() for f in self.model.weights])
 
         return 1
 
